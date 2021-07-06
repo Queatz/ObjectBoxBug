@@ -1,21 +1,23 @@
 package com.example.objectboxbug
 
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 import io.objectbox.BoxStore
 import io.objectbox.android.AndroidScheduler
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.random.Random
 
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var boxStore: BoxStore
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val handlerThread = HandlerThread("backgroundThread").also { it.start() }
+    private val handler = Handler(handlerThread.looper)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,20 +44,24 @@ class MainActivity : AppCompatActivity() {
     private fun sync() {
         val results = (0..10000).mapIndexed { it, i -> Model().apply { objectBoxId = i.toLong() } }
 
-        findViewById<TextView>(R.id.textView).text = "${SimpleDateFormat.getTimeInstance().format(Date())}"
+        findViewById<TextView>(R.id.textView).apply {
+            post {
+                text = "${SimpleDateFormat.getTimeInstance().format(Date())}"
+            }
+        }
 
-        boxStore.runInTxAsync({
+//        boxStore.runInTxAsync({
             removeAllExcept(results.filter { Random.nextBoolean() }.map { it.objectBoxId }.toSet())
 
             boxStore.boxFor(Model::class.java).put(results)
-        }, null)
+//        }, null)
 
         handler.postDelayed({
             sync()
         }, 10)
     }
 
-    private fun removeAllExcept(idsToKeep: Collection<Long>) {
+    private fun removeAllExcept(idsToKeep: Collection<Long>, async: Boolean = false) {
         val query = boxStore.boxFor(Model::class.java).query()
 
         var isNotFirst = false
@@ -69,6 +75,11 @@ class MainActivity : AppCompatActivity() {
             query.notEqual(Model_.__ID_PROPERTY, idToKeep)
         }
 
-        query.build().remove()
+
+        if (async) {
+            query.build().subscribe().single().observer { toDelete -> boxStore.boxFor(Model::class.java).remove(toDelete) }
+        } else {
+            query.build().remove()
+        }
     }
 }
